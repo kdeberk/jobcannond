@@ -37,27 +37,19 @@ impl Session {
         }
     }
 
-    pub fn run(&mut self) -> () {
+    pub async fn run(&mut self) -> Result<(), SessionError> {
         loop {
-            let res = self.read_command()
-                          .and_then(|cmd| self.handle(cmd))
-                          .and_then(|resp| self.write_response(resp));
-
-            match res {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("{:?}", e);
-                    return
-                }
-            }
+            let cmd = self.read_command().await?;
+            let response = self.handle(cmd).await?;
+            self.write_response(response)?;
         }
     }
 
-    fn read_command(&mut self) -> Result<Command, SessionError> {
+    async fn read_command(&mut self) -> Result<Command, SessionError> {
         Ok(self.protocol.read_command()?)
     }
 
-    fn handle(&mut self, command: Command) -> Result<Response, SessionError> {
+    async fn handle(&mut self, command: Command) -> Result<Response, SessionError> {
         match command {
             Command::Put{pri, delay, ttr, data} => {
                 let job_id = self.view.next_job_id();
@@ -76,7 +68,7 @@ impl Session {
                 Ok(Response::Inserted{id: 1})
             },
             Command::Reserve{} => {
-                match self.view.pop_ready() {
+                match self.view.pop_ready().await {
                     Some(job) => {
                         let (id, ttr, data) = (job.id, job.ttr, job.data.clone());
                         self.by_time.push(ReservedJob { id, until: time::Instant::now() + time::Duration::new(ttr as u64, 0) });

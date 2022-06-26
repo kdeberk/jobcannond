@@ -1,11 +1,12 @@
 use crate::jobs::{ReadyJob, DelayedJob, Job};
 use crate::ordered_set::OrderedSet;
 use std::collections::{HashMap, BinaryHeap};
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc};
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::AcqRel;
 use std::time;
 use std::ops::Deref;
+use async_std::sync::{Condvar, Mutex};
 
 pub struct Tube {
     pub id: usize,
@@ -69,63 +70,55 @@ impl TubeStore {
         self.job_counter.fetch_add(1, AcqRel) as u32
     }
 
-    fn take_tubes(&mut self, watched: &OrderedSet<String>) -> Vec<Tube> {
-        watched
-            .iter()
-            .filter_map(|name| {
-                self.take_tube(name)
-                    .and_then(|mut tube| {
-                        tube.delayed_maintenance();
+    async fn take_tubes(&mut self, watched: &OrderedSet<String>) -> Vec<Tube> {
+        let mut tubes = Vec::new();
 
-                        if tube.ready.is_empty() {
-                            self.return_tube(tube);
-                            None
-                        } else {
-                            Some(tube)
-                        }
-                    })
-            }).collect()
-    }
-
-    fn take_tube(&mut self, name: &String) -> Option<Tube> {
+        let mut watched:Vec<String> = watched.to_vec();
         loop {
-            let mut store = self.store.lock().unwrap();
+            let mut missing = Vec::new();
+            let mut store = self.store.lock().await;
 
-            match store.remove_entry(name) {
-                Some((k, TubeEntry::Tube(tube))) => {
-                    store.insert(k, TubeEntry::Taken);
-                    return Some(tube);
-                },
-                Some((k, TubeEntry::Taken)) => {
-                    store.insert(k, TubeEntry::Taken);
-                },
-                None => {
-                    return None;
+            for name in watched.into_iter() {
+                match store.remove_entry(&name) {
+                    Some((k, TubeEntry::Tube(tube))) => {
+                        store.insert(k, TubeEntry::Taken);
+                        tubes.push(tube);
+                    },
+                    Some((k, TubeEntry::Taken)) => {
+                        store.insert(k, TubeEntry::Taken);
+                        missing.push(name);
+                    },
+                    None => (),
                 }
             }
 
-            // Wait for a return_tube call to wake this thread.
-            self.wake_on_return.wait(store).unwrap();
+            if(missing.is_empty()) {
+                break
+            }
+
+            watched = missing;
+            self.wake_on_return.wait(store).await;
         }
+        tubes
     }
 
-    fn return_tube(&mut self, tube: Tube) {
-        let mut store = self.store.lock().unwrap();
+    async fn return_tube(&mut self, tube: Tube) {
+        let mut store = self.store.lock().await;
         let name = tube.name.clone();
 
         store.insert(name, TubeEntry::Tube(tube));
         self.wake_on_return.notify_all();
     }
 
-    fn with_tube<F>(&mut self, name: &String, f: F)
+    async fn with_tube<F>(&mut self, name: &String, f: F)
     where F: FnOnce(&mut Tube) {
         loop {
-            let mut store = self.store.lock().unwrap();
+            let mut store = self.store.lock().await;
 
             match store.entry(name.clone())
                        .or_insert(TubeEntry::Tube(Tube::new(0, name.clone()))) {
                 TubeEntry::Taken => {
-                    self.wake_on_return.wait(store).unwrap();
+                    self.wake_on_return.wait(store);
                 },
                 TubeEntry::Tube(t) => {
                     f(t);
@@ -194,8 +187,8 @@ impl TubeView {
     }
 
     // TODO: don't return None, block until job was added.
-    pub fn pop_ready(&mut self) -> Option<Job> {
-        let tubes = self.store.take_tubes(&self.watched);
+    pub async fn pop_ready(&mut self) -> Option<Job> {
+        let tubes = self.store.take_tubes(&self.watched).await;
         if tubes.is_empty() {
             return None
         }
