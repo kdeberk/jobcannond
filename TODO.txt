@@ -1,0 +1,12 @@
+- Missing commands & responses
+- Read job data
+- Test (& test framework)
+- Reserve with timout
+- Drain mode
+- Use makes tube.
+- Keep track of reserved jobs.
+- Catch OOM errors.
+- If only watching single tube, don't remove tube, just pop from hashmap.
+- Think about dropping watching multiple tubes, it makes the code & concurrency a lot simpler.
+- Benchmarks & compare with beanstalkd
+- Archiving jobs & Restoring
