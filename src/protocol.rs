@@ -4,7 +4,7 @@
 // - support missing responses
 // - support missing commands
 
-const MaxTubeNameSize:usize = 200;
+const MAX_TUBE_NAME_SIZE:usize = 200;
 
 #[derive(Debug)]
 pub enum Command {
@@ -39,7 +39,7 @@ pub enum Command {
 pub enum Response {
     Buried { id: u32 },
     Deleted,
-    Found { id: u32, data: Vec<u8> },
+    FoundJob { id: u32, data: Vec<u8> },
     Inserted { id: u32 },
     JobTimedOut { id: u32 },
     Kicked { count: u32 },
@@ -47,15 +47,15 @@ pub enum Response {
     Paused,
     Released,
     Reserved { id: u32, data: Vec<u8> },
-    Stats { data: Vec<u8> },
     TimedOut,
     Touched,
     Using { tube: String },
     Watching { count: u32 },
+    YamlData { data: Vec<u8> },
     // Following are used for communicate error conditions.
     BadFormat,
     Draining,
-    ExpectedCLRF,
+    ExpectedCRLF,
     InternalError,
     JobTooBig,
     NotFound,
@@ -150,38 +150,43 @@ where RW: std::io::Read + std::io::Write {
 
     pub fn write_response(&mut self, r: Response) -> Result<(), StreamError> {
         match r {
-            Response::Inserted{id} => {
-                write!(self.stream, "INSERTED {}\r\n", id)?;
-            },
-            Response::Using{tube} => {
-                write!(self.stream, "USING {}\r\n", tube)?;
-            },
+            Response::Buried{id} => write!(self.stream, "BURIED {}\r\n", id)?,
+            Response::Deleted => write!(self.stream, "DELETED\r\n")?,
+            Response::FoundJob{id, data} => {
+                write!(self.stream, "FOUND {} {}\r\n", id, data.len())?;
+                self.stream.write_all(&data)?;
+                write!(self.stream, "\r\n")?;
+            }
+            Response::Inserted{id} => write!(self.stream, "INSERTED {}\r\n", id)?,
+            Response::JobTimedOut{id} => write!(self.stream, "TIMED_OUT {}\r\n", id)?,
+            Response::Kicked{count} => write!(self.stream, "KICKED {}\r\n", count)?,
+            Response::KickedOne => write!(self.stream, "KICKED\r\n")?,
+            Response::Paused => write!(self.stream, "PAUSED\r\n")?,
+            Response::Released => write!(self.stream, "RELEASED\r\n")?,
             Response::Reserved{id, data} => {
                 write!(self.stream, "RESERVED {} {}\r\n", id, data.len())?;
                 self.stream.write_all(&data)?;
                 write!(self.stream, "\r\n")?;
             },
-            Response::Deleted => {
-                write!(self.stream, "DELETED\r\n")?;
+            Response::TimedOut => write!(self.stream, "TIMED_OUT\r\n")?,
+            Response::Touched => write!(self.stream, "TOUCHED\r\n")?,
+            Response::Using{tube} => write!(self.stream, "USING {}\r\n", tube)?,
+            Response::Watching{count} => write!(self.stream, "WATCHING {}\r\n", count)?,
+            Response::YamlData{data} => {
+                write!(self.stream, "OK {}\r\n", data.len())?;
+                self.stream.write_all(&data)?;
+                write!(self.stream, "\r\n")?;
             },
-            Response::Released => {
-                write!(self.stream, "RELEASED\r\n")?;
-            },
-            Response::Buried{id} => {
-                write!(self.stream, "BURIED {}\r\n", id)?;
-            },
-            Response::Touched => {
-                write!(self.stream, "TOUCHED\r\n")?;
-            },
-            Response::Watching{count} => {
-                write!(self.stream, "WATCHING {}\r\n", count)?;
-            },
-            Response::NotFound => {
-                write!(self.stream, "NOTFOUND\r\n")?;
-            }
-            Response::Error{str} => {
-                write!(self.stream, "error: {}\r\n", str)?;
-            }
+            // Error conditions
+            Response::BadFormat => write!(self.stream, "BAD_FORMAT\r\n")?,
+            Response::Draining => write!(self.stream, "DRAINING\r\n")?,
+            Response::ExpectedCRLF => write!(self.stream, "EXPECTED_CRLF\r\n")?,
+            Response::InternalError => write!(self.stream, "INTERNAL_ERROR\r\n")?,
+            Response::JobTooBig => write!(self.stream, "JOB_TOO_BIG\r\n")?,
+            Response::NotFound => write!(self.stream, "NOT_FOUND\r\n")?,
+            Response::NotIgnored => write!(self.stream, "NOT_IGNORED\r\n")?,
+            Response::OutOfMemory => write!(self.stream, "OUT_OF_MEMORY\r\n")?,
+            Response::UnknownCommand => write!(self.stream, "UNKNOWN_COMMAND\r\n")?,
         }
         Ok(())
     }
