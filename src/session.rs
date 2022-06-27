@@ -24,6 +24,8 @@ pub struct Session {
 // TODO:
 // - Session keeps track of expiring reserved jobs.
 
+const MinTTR:u32 = 1;
+
 impl Session {
     pub fn new(socket: std::net::TcpStream, store: TubeStore) -> Self {
         Session{
@@ -53,6 +55,11 @@ impl Session {
         match command {
             Command::Put{pri, delay, ttr, data} => {
                 let job_id = self.view.next_job_id();
+
+                if(ttr == 0) {
+                    ttr = MinTTR;
+                }
+
                 let job = Job{ id: job_id, pri, ttr, data, tube: self.tube.clone() };
 
                 if 0 < delay {

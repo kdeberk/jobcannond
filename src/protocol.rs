@@ -4,39 +4,64 @@
 // - support missing responses
 // - support missing commands
 
+const MaxTubeNameSize:usize = 200;
+
 #[derive(Debug)]
 pub enum Command {
-    Put { pri: u32, delay: u32, ttr: u32, data: Vec<u8>},
-    Use { tube: String },
-    Reserve {},
-    ReserveWithTimeout { timeout: u32 },
-    Delete { id: u32 },
-    Release { id: u32, pri: u32, delay: u32 },
     Bury { id: u32, pri: u32 },
-    Touch { id: u32 },
-    Watch { tube: String },
+    Delete { id: u32 },
     Ignore { tube: String },
+    Kick { count: u32 },
+    KickJob { id: u32 },
+    ListTubeUsed,
+    ListTubes,
+    ListTubesWatched,
+    PauseTube { tube: String, delay: u32 },
+    Peek { id: u32 },
+    PeekBuried,
+    PeekDelayed,
+    PeekReady,
+    Put { pri: u32, delay: u32, ttr: u32, data: Vec<u8>},
+    Quit,
+    Release { id: u32, pri: u32, delay: u32 },
+    Reserve,
+    ReserveJob { id: u32 },
+    ReserveWithTimeout { timeout: u32 },
+    Stats,
+    StatsJob { id: u32 },
+    StatsTube { tube: String },
+    Touch { id: u32 },
+    Use { tube: String },
+    Watch { tube: String },
 }
 
 #[derive(Debug)]
 pub enum Response {
-    Inserted { id: u32 },
-    Using { tube: String },
-    Reserved { id: u32, data: Vec<u8> },
-    Deleted,
-    Released,
     Buried { id: u32 },
+    Deleted,
+    Found { id: u32, data: Vec<u8> },
+    Inserted { id: u32 },
+    JobTimedOut { id: u32 },
+    Kicked { count: u32 },
+    KickedOne,
+    Paused,
+    Released,
+    Reserved { id: u32, data: Vec<u8> },
+    Stats { data: Vec<u8> },
+    TimedOut,
     Touched,
+    Using { tube: String },
     Watching { count: u32 },
-    // DeadlineSoon { id: u32 },
-    // TimedOut { id: u32 },
-    // // Following are used for communicate error conditions.
-    // ExpectedCLRF,
-    // JobTooBig,
-    // Draining,
+    // Following are used for communicate error conditions.
+    BadFormat,
+    Draining,
+    ExpectedCLRF,
+    InternalError,
+    JobTooBig,
     NotFound,
-    // NotIgnored,
-    Error { str: String }
+    NotIgnored,
+    OutOfMemory,
+    UnknownCommand,
 }
 
 #[derive(thiserror::Error, Debug)]
