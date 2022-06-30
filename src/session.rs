@@ -1,7 +1,7 @@
 use crate::jobs::{Job, ReservedJob};
 use crate::ordered_set::OrderedSet;
-use crate::protocol::{Protocol, Command, Response, StreamError};
-use crate::tubes::{TubeView, TubeStore};
+use crate::protocol::{Command, Protocol, Response, StreamError};
+use crate::tubes::{TubeStore, TubeView};
 use std::collections::{BinaryHeap, HashMap};
 use std::time;
 
@@ -24,11 +24,11 @@ pub struct Session {
 // TODO:
 // - Session keeps track of expiring reserved jobs.
 
-const MIN_TTR:u32 = 1;
+const MIN_TTR: u32 = 1;
 
 impl Session {
     pub fn new(socket: std::net::TcpStream, store: TubeStore) -> Self {
-        Session{
+        Session {
             protocol: Protocol::new(socket),
 
             tube: "default".into(),
@@ -53,14 +53,25 @@ impl Session {
 
     async fn handle(&mut self, command: Command) -> Result<Response, SessionError> {
         match command {
-            Command::Put{pri, delay, mut ttr, data} => {
+            Command::Put {
+                pri,
+                delay,
+                mut ttr,
+                data,
+            } => {
                 let job_id = self.view.next_job_id();
 
-                if(ttr == 0) {
+                if (ttr == 0) {
                     ttr = MIN_TTR;
                 }
 
-                let job = Job{ id: job_id, pri, ttr, data, tube: self.tube.clone() };
+                let job = Job {
+                    id: job_id,
+                    pri,
+                    ttr,
+                    data,
+                    tube: self.tube.clone(),
+                };
 
                 if 0 < delay {
                     let until = time::Instant::now() + time::Duration::new(delay as u64, 0);
@@ -68,53 +79,54 @@ impl Session {
                 } else {
                     self.view.push_ready(job);
                 }
-                Ok(Response::Inserted{id: job_id})
-            },
-            Command::Use{tube} => {
+                Ok(Response::Inserted { id: job_id })
+            }
+            Command::Use { tube } => {
                 self.tube = tube;
-                Ok(Response::Inserted{id: 1})
-            },
-            Command::Reserve{} => {
-                match self.view.pop_ready().await {
-                    Some(job) => {
-                        let (id, ttr, data) = (job.id, job.ttr, job.data.clone());
-                        self.by_time.push(ReservedJob { id, until: time::Instant::now() + time::Duration::new(ttr as u64, 0) });
-                        Ok(Response::Reserved { id, data })
-                    },
-                    None => Ok(Response::NotFound),
+                Ok(Response::Inserted { id: 1 })
+            }
+            Command::Reserve {} => match self.view.pop_ready().await {
+                Some(job) => {
+                    let (id, ttr, data) = (job.id, job.ttr, job.data.clone());
+                    self.by_time.push(ReservedJob {
+                        id,
+                        until: time::Instant::now() + time::Duration::new(ttr as u64, 0),
+                    });
+                    Ok(Response::Reserved { id, data })
                 }
+                None => Ok(Response::NotFound),
             },
-            Command::ReserveWithTimeout{timeout} => Ok(Response::NotFound), // TODO
-            Command::Delete{id} => {
-                match self.reserved.remove(&id) {
-                    Some(_) => Ok(Response::Deleted{}),
-                    None => Ok(Response::NotFound)
+            Command::ReserveWithTimeout { timeout } => Ok(Response::NotFound), // TODO
+            Command::Delete { id } => match self.reserved.remove(&id) {
+                Some(_) => Ok(Response::Deleted {}),
+                None => Ok(Response::NotFound),
+            },
+            Command::Release { id, pri, delay } => match self.reserved.remove(&id) {
+                Some(job) => {
+                    if 0 < delay {
+                        let until = time::Instant::now() + time::Duration::new(delay as u64, 0);
+                        self.view.push_delayed(job, until);
+                    } else {
+                        self.view.push_ready(job);
+                    }
+                    Ok(Response::Released)
                 }
+                None => Ok(Response::NotFound),
             },
-            Command::Release{id, pri, delay} => {
-                match self.reserved.remove(&id) {
-                    Some(job) => {
-                        if 0 < delay {
-                            let until = time::Instant::now() + time::Duration::new(delay as u64, 0);
-                            self.view.push_delayed(job, until);
-                        } else {
-                            self.view.push_ready(job);
-                        }
-                        Ok(Response::Released)
-                    },
-                    None => Ok(Response::NotFound)
-                }
-            },
-            Command::Bury{id, pri} => Ok(Response::NotFound), // TODO
-            Command::Touch{id} => Ok(Response::NotFound), // TODO
-            Command::Watch{tube} => {
+            Command::Bury { id, pri } => Ok(Response::NotFound), // TODO
+            Command::Touch { id } => Ok(Response::NotFound),     // TODO
+            Command::Watch { tube } => {
                 let count = self.view.watch(tube);
-                Ok(Response::Watching{count: count as u32})
-            },
-            Command::Ignore{tube} => {
+                Ok(Response::Watching {
+                    count: count as u32,
+                })
+            }
+            Command::Ignore { tube } => {
                 let count = self.view.ignore(&tube);
-                Ok(Response::Watching{count: count as u32})
-            },
+                Ok(Response::Watching {
+                    count: count as u32,
+                })
+            }
             _ => todo!(),
         }
     }
