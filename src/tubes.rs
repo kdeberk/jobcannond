@@ -1,12 +1,12 @@
-use crate::jobs::{ReadyJob, DelayedJob, Job};
+use crate::jobs::{DelayedJob, Job, ReadyJob};
 use crate::ordered_set::OrderedSet;
-use std::collections::{HashMap, BinaryHeap};
-use std::sync::{Arc};
+use async_std::sync::{Condvar, Mutex};
+use std::collections::{BinaryHeap, HashMap};
+use std::ops::Deref;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::AcqRel;
+use std::sync::Arc;
 use std::time;
-use std::ops::Deref;
-use async_std::sync::{Condvar, Mutex};
 
 pub struct Tube {
     pub id: usize,
@@ -21,22 +21,23 @@ pub struct Tube {
 
 impl Tube {
     pub fn new(id: usize, name: String) -> Self {
-        return Tube{
-            id, name,
+        return Tube {
+            id,
+            name,
             ready: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
-        }
+        };
     }
 
     pub fn delayed_maintenance(&mut self) {
         loop {
             if self.delayed.is_empty() {
-                break
+                break;
             }
 
             let job = self.delayed.peek().unwrap();
             if job.until < time::Instant::now() {
-                break
+                break;
             }
 
             let job = self.delayed.pop().unwrap().job;
@@ -73,7 +74,7 @@ impl TubeStore {
     async fn take_tubes(&mut self, watched: &OrderedSet<String>) -> Vec<Tube> {
         let mut tubes = Vec::new();
 
-        let mut watched:Vec<String> = watched.to_vec();
+        let mut watched: Vec<String> = watched.to_vec();
         loop {
             let mut missing = Vec::new();
             let mut store = self.store.lock().await;
@@ -83,17 +84,17 @@ impl TubeStore {
                     Some((k, TubeEntry::Tube(tube))) => {
                         store.insert(k, TubeEntry::Taken);
                         tubes.push(tube);
-                    },
+                    }
                     Some((k, TubeEntry::Taken)) => {
                         store.insert(k, TubeEntry::Taken);
                         missing.push(name);
-                    },
+                    }
                     None => (),
                 }
             }
 
-            if(missing.is_empty()) {
-                break
+            if (missing.is_empty()) {
+                break;
             }
 
             watched = missing;
@@ -111,19 +112,23 @@ impl TubeStore {
     }
 
     async fn with_tube<F>(&mut self, name: &String, f: F)
-    where F: FnOnce(&mut Tube) {
+    where
+        F: FnOnce(&mut Tube),
+    {
         loop {
             let mut store = self.store.lock().await;
 
-            match store.entry(name.clone())
-                       .or_insert(TubeEntry::Tube(Tube::new(0, name.clone()))) {
+            match store
+                .entry(name.clone())
+                .or_insert(TubeEntry::Tube(Tube::new(0, name.clone())))
+            {
                 TubeEntry::Taken => {
                     self.wake_on_return.wait(store);
-                },
+                }
                 TubeEntry::Tube(t) => {
                     f(t);
-                    return
-                },
+                    return;
+                }
             }
         }
     }
@@ -169,28 +174,27 @@ impl TubeView {
     pub fn push_ready(&mut self, job: Job) {
         let tube = job.tube.clone();
         self.store.with_tube(&tube, |tube: &mut Tube| {
-            tube.ready.push( ReadyJob { job });
+            tube.ready.push(ReadyJob { job });
         });
     }
 
     pub fn push_delayed(&mut self, job: Job, until: time::Instant) {
         let tube = job.tube.clone();
         self.store.with_tube(&tube, |tube: &mut Tube| {
-            tube.delayed.push( DelayedJob { job, until });
+            tube.delayed.push(DelayedJob { job, until });
         });
     }
 
     pub fn push_buried(&mut self, job: Job) {
         let tube = job.tube.clone();
-        self.store.with_tube(&tube, |tube: &mut Tube| {
-        });
+        self.store.with_tube(&tube, |tube: &mut Tube| {});
     }
 
     // TODO: don't return None, block until job was added.
     pub async fn pop_ready(&mut self) -> Option<Job> {
         let tubes = self.store.take_tubes(&self.watched).await;
         if tubes.is_empty() {
-            return None
+            return None;
         }
 
         let (mut tube, _) = tubes
@@ -203,7 +207,8 @@ impl TubeView {
                 let (min, max) = if a.1 < b.1 { (a, b) } else { (b, a) };
                 self.store.return_tube(max.0);
                 min
-            }).unwrap();
+            })
+            .unwrap();
 
         let ready = tube.ready.pop().unwrap();
         self.store.return_tube(tube);

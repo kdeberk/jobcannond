@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
+mod jobs;
+mod ordered_set;
 mod protocol;
 mod session;
-mod jobs;
 mod tubes;
-mod ordered_set;
 
+use crate::tubes::TubeStore;
 use async_std;
 use session::Session;
-use crate::tubes::TubeStore;
 
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         async_std::task::spawn(async {
             match Session::new(socket, tube_store).run().await {
                 Ok(_) => println!("Connected terminates successfully"),
-                Err(err) => println!("Err: {}", err)
+                Err(err) => println!("Err: {}", err),
             }
         });
     }
