@@ -1,0 +1,5 @@
+tab_spaces = 1
+max_width = 180
+where_single_line = true
+use_small_heuristics = "off"
+struct_lit_width = 100

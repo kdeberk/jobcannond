@@ -8,5 +8,8 @@ edition = "2018"
 
 [dependencies]
 thiserror = { version = "1" }
-async-std = { version = "1.12", features=["unstable", "attributes"] }
+tokio = { version = "1.20", features = ["full"] }
 futures = "0.3"
+
+[dev-dependencies]
+regex = { version = "1" }

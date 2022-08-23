@@ -1,30 +1,18 @@
-#![allow(dead_code)]
-#![allow(unused)]
-
 mod jobs;
-mod ordered_set;
 mod protocol;
+mod server;
 mod session;
-mod tubes;
 
-use crate::tubes::TubeStore;
-use async_std;
-use session::Session;
+use server::run_tcp_server;
 
-#[async_std::main]
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:11300")?;
-    let tube_store = TubeStore::new();
+ let addr = "127.0.0.1:11300".parse::<std::net::SocketAddr>()?;
 
-    loop {
-        let (socket, _) = listener.accept()?;
-        let tube_store = tube_store.clone();
-
-        async_std::task::spawn(async {
-            match Session::new(socket, tube_store).run().await {
-                Ok(_) => println!("Connected terminates successfully"),
-                Err(err) => println!("Err: {}", err),
-            }
-        });
-    }
+ let listener = tokio::net::TcpListener::bind(&addr).await?;
+ match run_tcp_server(listener).await {
+  Ok(_) => (),
+  Err(e) => println!("{:?}", e),
+ };
+ Ok(())
 }

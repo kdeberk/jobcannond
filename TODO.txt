@@ -4,8 +4,9 @@
 - Reserve with timout
 - Drain mode
 - Use makes tube.
-- Keep track of reserved jobs.
-- Catch OOM errors.
+- Keep track of reserved jobs; put them back when reservation times out.
+  If session is closed, all reserved jobs are placed back.
+- Catch OOM errors; or perhaps instead have a memory limit and guard it.
 - If only watching single tube, don't remove tube, just pop from hashmap.
 - Think about dropping watching multiple tubes, it makes the code & concurrency a lot simpler.
 - Benchmarks & compare with beanstalkd
