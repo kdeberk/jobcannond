@@ -4,7 +4,6 @@ use std::ops::Deref;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::AcqRel;
 use std::sync::Arc;
-use std::time;
 use tokio::sync::Mutex;
 
 pub type TubeID = usize;
@@ -20,6 +19,7 @@ pub struct Job {
 
 // A Tube is an object that holds unreserved jobs. These jobs can be ready or
 // delayed.
+#[derive(Default)]
 pub struct Tube {
  // ready jobs are ordered by their priority
  ready: BinaryHeap<ReadyJob>,
@@ -29,7 +29,7 @@ pub struct Tube {
 
 impl Tube {
  pub fn new() -> Self {
-  return Tube { ready: BinaryHeap::new(), delayed: BinaryHeap::new() };
+  Tube { ready: BinaryHeap::new(), delayed: BinaryHeap::new() }
  }
 
  // delayed_maintenance moves the delayed jobs to the
@@ -41,7 +41,7 @@ impl Tube {
    }
 
    let job = self.delayed.peek().unwrap();
-   if job.until < time::Instant::now() {
+   if job.until < std::time::Instant::now() {
     break;
    }
 
@@ -68,13 +68,13 @@ impl Tube {
   }
  }
 
- pub fn push_delayed(&mut self, job: Job, until: time::Instant) {
+ pub fn push_delayed(&mut self, job: Job, until: std::time::Instant) {
   self.delayed.push(DelayedJob { until, job });
  }
 }
 
 // JobStore owns all tubes, and so indirectly, also owns all unreserved jobs.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct JobStore {
  job_counter: Arc<AtomicU32>,
  tube_ids: Arc<Mutex<HashMap<String, usize>>>,
@@ -123,7 +123,7 @@ impl JobStore {
   job_id
  }
 
- pub async fn push_delayed(&mut self, mut job: Job, until: time::Instant) -> u32 {
+ pub async fn push_delayed(&mut self, mut job: Job, until: std::time::Instant) -> u32 {
   let job_id = match job.id {
    None => self.job_counter.fetch_add(1, AcqRel) as u32,
    Some(id) => id,
@@ -180,21 +180,18 @@ impl JobStore {
  // easier than returning a borrow/reference to the indicated tube.
  async fn with_tube<F>(&mut self, id: TubeID, f: F)
  where F: FnOnce(&mut Tube) {
-  loop {
-   let mut store = self.store.lock().await;
+  let mut store = self.store.lock().await;
 
-   let mut tube = match store.get_mut(&id) {
-    None => {
-     store.insert(id, Tube::new());
-     store.get_mut(&id).unwrap()
-    }
-    Some(tube) => tube,
-   };
+  let tube = match store.get_mut(&id) {
+   None => {
+    store.insert(id, Tube::new());
+    store.get_mut(&id).unwrap()
+   }
+   Some(tube) => tube,
+  };
 
-   tube.delayed_maintenance();
-   f(&mut tube);
-   return;
-  }
+  tube.delayed_maintenance();
+  f(tube);
  }
 }
 
@@ -225,7 +222,7 @@ impl PartialOrd for ReadyJob {
 
 #[derive(PartialEq, Eq)]
 struct DelayedJob {
- pub until: time::Instant,
+ pub until: std::time::Instant,
  pub job: Job,
 }
 

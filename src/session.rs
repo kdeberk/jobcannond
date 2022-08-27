@@ -2,15 +2,15 @@
 #![allow(unused)]
 
 use crate::jobs::{Job, JobStore, TubeID};
-use crate::protocol::{Command, Protocol, Response, StreamError};
+use crate::protocol::{Command, Error as ProtocolError, Protocol, Response};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::time;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
  #[error("{:?}", .0)]
- Stream(#[from] StreamError),
+ Stream(#[from] ProtocolError),
 }
 
 // Session wraps a client connection. It handles ownership of reserved jobs and
@@ -36,7 +36,7 @@ pub struct Session<RW> {
 const MIN_TTR: u32 = 1;
 
 impl<RW> Session<RW>
-where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
+where RW: AsyncRead + AsyncWrite
 {
  pub fn new(stream: RW, store: JobStore) -> Self {
   let mut watched = HashSet::new();
@@ -112,7 +112,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
   let job = Job { id: None, pri, ttr, data, tube: self.tube_id };
 
   let job_id = if 0 < delay {
-   let until = time::Instant::now() + time::Duration::new(delay as u64, 0);
+   let until = std::time::Instant::now() + std::time::Duration::new(delay as u64, 0);
    self.store.push_delayed(job, until).await
   } else {
    self.store.push_ready(job).await
@@ -132,8 +132,8 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
  async fn handle_reserve(&mut self) -> Result<Response, SessionError> {
   match self.store.pop_ready(&self.watched).await {
    Some(job) => {
-    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data.clone());
-    self.by_time.push(ReservedJob { id, until: time::Instant::now() + time::Duration::new(ttr as u64, 0) });
+    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data);
+    self.by_time.push(ReservedJob { id, until: std::time::Instant::now() + std::time::Duration::new(ttr as u64, 0) });
     Ok(Response::Reserved { id, data })
    }
    None => Ok(Response::NotFound),
@@ -151,7 +151,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
   match self.reserved.remove(&id) {
    Some(job) => {
     if 0 < delay {
-     let until = time::Instant::now() + time::Duration::new(delay as u64, 0);
+     let until = std::time::Instant::now() + std::time::Duration::new(delay as u64, 0);
      self.store.push_delayed(job, until).await;
     } else {
      self.store.push_ready(job).await;
@@ -173,7 +173,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
 // A ReservedJob wraps the id and reserved-until timestamp. It's used by the
 // Session to order the jobs by their expiration times.
 struct ReservedJob {
- pub until: time::Instant,
+ pub until: std::time::Instant,
  pub id: u32,
 }
 

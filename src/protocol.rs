@@ -1,13 +1,10 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::AsyncBufRead;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWrite;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 
 const MAX_TUBE_NAME_SIZE: usize = 200;
 
@@ -125,9 +122,9 @@ pub enum Response {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum StreamError {
+pub enum Error {
  #[error("connection was closed")]
- EOF,
+ EndOfFile,
  #[error("error reading from client")]
  Read(#[from] std::io::Error),
  #[error("received invalid input from client: {reason}")]
@@ -141,15 +138,15 @@ macro_rules! async_write {
   use std::io::Write;
 
   let mut buf: Vec<u8> = vec![];
-  write!(buf, $fmt);
-  tokio::io::AsyncWriteExt::write_all(&mut $dst, &buf).await?;
+  write!(buf, $fmt)?;
+  AsyncWriteExt::write_all(&mut $dst, &buf).await?;
  }};
  ($dst: expr, $fmt: expr, $($arg: tt)*) => {{
   use std::io::Write;
 
   let mut buf: Vec<u8> = vec![];
-  write!(buf, $fmt, $( $arg )*);
-  tokio::io::AsyncWriteExt::write_all(&mut $dst, &buf).await?;
+  write!(buf, $fmt, $( $arg )*)?;
+  AsyncWriteExt::write_all(&mut $dst, &buf).await?;
  }};
 }
 
@@ -158,13 +155,13 @@ pub struct Protocol<RW> {
 }
 
 impl<RW> Protocol<RW>
-where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
+where RW: AsyncRead + AsyncWrite
 {
  pub fn new(stream: RW) -> Self {
   Protocol { stream: Stream::new(stream) }
  }
 
- pub async fn read_command(&mut self) -> Result<Command, StreamError> {
+ pub async fn read_command(&mut self) -> Result<Command, Error> {
   use Command::*;
 
   let command = match self.stream.read_word().await?.as_str() {
@@ -193,7 +190,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
     let delay = self.stream.read_u32().await?;
     let ttr = self.stream.read_u32().await?;
     let bytes = self.stream.read_u32().await?;
-    _ = self.stream.read_crnl().await?;
+    self.stream.read_crnl().await?;
     let data = self.stream.read_data(bytes as usize).await?;
     Ok(Put { pri, delay, ttr, data })
    }
@@ -213,16 +210,16 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
    "touch" => Ok(Touch { id: self.stream.read_u32().await? }),
    "use" => Ok(Use { tube: self.stream.read_word().await? }),
    "watch" => Ok(Watch { tube: self.stream.read_word().await? }),
-   _ => Err(StreamError::UnexpectedInput { reason: "Unknown command".into() }),
+   xx => Err(Error::UnexpectedInput { reason: format!("Unknown command {}", xx) }),
   };
 
-  if let Ok(_) = command {
+  if command.is_ok() {
    self.stream.read_crnl().await?;
   };
   command
  }
 
- pub async fn read_response(&mut self) -> Result<Response, StreamError> {
+ pub async fn read_response(&mut self) -> Result<Response, Error> {
   use Response::*;
 
   let response = match self.stream.read_word().await?.as_str() {
@@ -232,18 +229,18 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
     let id = self.stream.read_u32().await?;
     let bytes = self.stream.read_u32().await?;
     let data = self.stream.read_data(bytes as usize).await?;
-    _ = self.stream.read_crnl().await?;
+    self.stream.read_crnl().await?;
     Ok(Found { data, id })
    }
    "INSERTED" => Ok(Inserted { id: self.stream.read_u32().await? }),
    "KICKED" => {
     let arg = self.stream.read_word().await?;
-    if arg == "" {
+    if arg.is_empty() {
      Ok(Kicked { count: None })
     } else {
      match arg.parse::<u32>() {
       Ok(count) => Ok(Kicked { count: Some(count) }),
-      Err(_) => Err(StreamError::UnexpectedInput { reason: format!("not a number {:?}", arg).into() }),
+      Err(_) => Err(Error::UnexpectedInput { reason: format!("not a number {:?}", arg) }),
      }
     }
    }
@@ -274,16 +271,16 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
    "NOT_IGNORED" => Ok(NotIgnored),
    "OUT_OF_MEMORY" => Ok(OutOfMemory),
    "UNKNOWN_COMMAND" => Ok(UnknownCommand),
-   _ => Err(StreamError::UnexpectedInput { reason: "Unknown response".into() }),
+   _ => Err(Error::UnexpectedInput { reason: "Unknown response".into() }),
   };
 
-  if let Ok(_) = response {
+  if response.is_ok() {
    self.stream.read_crnl().await?;
   }
   response
  }
 
- pub async fn write_command(&mut self, c: Command) -> Result<(), StreamError> {
+ pub async fn write_command(&mut self, c: Command) -> Result<(), Error> {
   use Command::*;
 
   match c {
@@ -301,7 +298,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
    PeekDelayed => async_write!(self.stream, "peek-delayed"),
    PeekReady => async_write!(self.stream, "peek-ready"),
    Put { pri, delay, ttr, data } => {
-    async_write!(self.stream, "put {} {} {}\r\n", pri, delay, ttr);
+    async_write!(self.stream, "put {} {} {} {}\r\n", pri, delay, ttr, data.len());
     self.stream.write_all(&data).await;
    }
    Quit => async_write!(self.stream, "quit"),
@@ -321,7 +318,7 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
   Ok(())
  }
 
- pub async fn write_response(&mut self, r: Response) -> Result<(), StreamError> {
+ pub async fn write_response(&mut self, r: Response) -> Result<(), Error> {
   use Response::*;
 
   match r {
@@ -368,64 +365,64 @@ where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
 // Stream wraps the readable/writeable stream and offers primitive read
 // operators.
 struct Stream<RW> {
- reader: tokio::io::BufReader<tokio::io::ReadHalf<RW>>,
- writer: tokio::io::WriteHalf<RW>,
+ reader: BufReader<ReadHalf<RW>>,
+ writer: WriteHalf<RW>,
 }
 
 impl<RW> Stream<RW>
-where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
+where RW: AsyncRead + AsyncWrite
 {
  pub fn new(stream: RW) -> Self {
   let (reader, writer) = tokio::io::split(stream);
 
-  Stream { reader: tokio::io::BufReader::new(reader), writer }
+  Stream { reader: BufReader::new(reader), writer }
  }
 
- async fn read_word(&mut self) -> Result<String, StreamError> {
+ async fn read_word(&mut self) -> Result<String, Error> {
   let mut buf = vec![];
   read_word(&mut self.reader, &mut buf).await?;
 
   match String::from_utf8(buf) {
    Ok(word) => Ok(word.trim().to_string()),
-   Err(err) => Err(StreamError::UnexpectedInput { reason: err.to_string() }),
+   Err(err) => Err(Error::UnexpectedInput { reason: err.to_string() }),
   }
  }
 
- async fn read_u32(&mut self) -> Result<u32, StreamError> {
+ async fn read_u32(&mut self) -> Result<u32, Error> {
   let word = self.read_word().await?;
 
   match word.parse::<u32>() {
    Ok(n) => Ok(n),
-   Err(_) => Err(StreamError::UnexpectedInput { reason: format!("not a number {:?}", &word).into() }),
+   Err(_) => Err(Error::UnexpectedInput { reason: format!("not a number {:?}", &word) }),
   }
  }
 
- async fn read_data(&mut self, count: usize) -> Result<Vec<u8>, StreamError> {
+ async fn read_data(&mut self, count: usize) -> Result<Vec<u8>, Error> {
   let mut buf = vec![0u8; count];
   self.reader.read_exact(&mut buf).await?;
 
   Ok(buf)
  }
 
- async fn read_crnl(&mut self) -> Result<(), StreamError> {
+ async fn read_crnl(&mut self) -> Result<(), Error> {
   let mut buf = [0u8; 2];
   self.reader.read_exact(&mut buf).await?;
 
   match (buf[0] as char, buf[1] as char) {
    ('\r', '\n') => Ok(()),
-   _ => Err(StreamError::UnexpectedInput { reason: format!("expected CRNL, got {:?}", buf) }),
+   _ => Err(Error::UnexpectedInput { reason: format!("expected CRNL, got {:?}", buf) }),
   }
  }
 
- async fn write<S: AsRef<str>>(&mut self, s: S) -> Result<(), StreamError> {
+ async fn write<S: AsRef<str>>(&mut self, s: S) -> Result<(), Error> {
   self.writer.write_all(s.as_ref().as_bytes()).await?;
   Ok(())
  }
 }
 
 // TODO: Check if we can simply ref so that the compiler can replace Stream with self.writer.
-impl<RW> tokio::io::AsyncWrite for Stream<RW>
-where RW: tokio::io::AsyncRead + tokio::io::AsyncWrite
+impl<RW> AsyncWrite for Stream<RW>
+where RW: AsyncRead + AsyncWrite
 {
  fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
   Pin::new(&mut self.writer).poll_write(cx, buf)
@@ -456,42 +453,39 @@ where R: AsyncBufRead + ?Sized + Unpin {
  WordReader { reader, buf, read: 0, read_non_ws: false }
 }
 
-const SPACE: u8 = ' ' as u8;
-const CARRIAGE_RETURN: u8 = '\r' as u8;
-const LINE_FEED: u8 = '\n' as u8;
-
-impl<R: AsyncBufRead + ?Sized + Unpin> std::future::Future for WordReader<'_, R> {
+impl<R: AsyncBufRead + ?Sized + Unpin> Future for WordReader<'_, R> {
  type Output = std::io::Result<usize>;
 
- fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+ fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
   let Self { reader, buf, read, read_non_ws } = &mut *self;
 
-  let mut reader = std::pin::Pin::new(reader);
+  let mut reader = Pin::new(reader);
   let mut done = false;
 
   loop {
    let mut used: usize = 0;
    let available = futures::ready!(reader.as_mut().poll_fill_buf(cx))?;
 
-   for idx in 0..available.len() {
-    match available[idx] {
-     SPACE | CARRIAGE_RETURN if *read_non_ws => {
+   for (idx, ch) in available.iter().enumerate() {
+    match *ch {
+     b' ' | b'\r' if *read_non_ws => {
       used = idx;
       done = true;
       break;
      }
-     SPACE | CARRIAGE_RETURN | LINE_FEED if *read_non_ws => (),
+     b' ' | b'\r' | b'\n' if !*read_non_ws => (),
      _ if !*read_non_ws => {
       *read_non_ws = true;
      }
      _ => (),
     }
+    buf.push(*ch);
    }
 
    reader.as_mut().consume(used);
    *read += used;
    if done || used == 0 {
-    return std::task::Poll::Ready(Ok(std::mem::replace(read, 0)));
+    return Poll::Ready(Ok(std::mem::replace(read, 0)));
    }
   }
  }
