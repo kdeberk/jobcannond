@@ -136,7 +136,7 @@ where RW: AsyncRead + AsyncWrite
     self.by_time.push(ReservedJob { id, until: std::time::Instant::now() + std::time::Duration::new(ttr as u64, 0) });
     Ok(Response::Reserved { id, data })
    }
-   None => Ok(Response::NotFound),
+   None => Ok(Response::NotFound), // TODO: wait until one job is available
   }
  }
 

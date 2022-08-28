@@ -13,7 +13,51 @@ enum Action {
 
 #[tokio::test]
 async fn test_put_single_job() {
- let hello_then_inserted = vec![vec![Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }), Action::Receive(Response::Inserted { id: 1 })]];
+ let hello_then_inserted = vec![vec![Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }), Action::Receive(Response::Inserted { id: 0 })]];
+
+ run_scenario(hello_then_inserted).await
+}
+
+#[tokio::test]
+async fn test_put_multiple_jobs() {
+ let hello_then_inserted = vec![vec![
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 1".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 2".into() }),
+  Action::Receive(Response::Inserted { id: 1 }),
+ ]];
+
+ run_scenario(hello_then_inserted).await
+}
+
+#[tokio::test]
+async fn test_put_then_reserve() {
+ let hello_then_inserted = vec![vec![
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 0, data: "Hello, World!".into() }),
+ ]];
+
+ run_scenario(hello_then_inserted).await
+}
+
+#[tokio::test]
+async fn test_puts_then_reserve_by_priority() {
+ let hello_then_inserted = vec![vec![
+  Action::Send(Command::Put { pri: 3, delay: 0, ttr: 10, data: "Test 1".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 2".into() }),
+  Action::Receive(Response::Inserted { id: 1 }),
+  Action::Send(Command::Put { pri: 2, delay: 0, ttr: 10, data: "Test 3".into() }),
+  Action::Receive(Response::Inserted { id: 2 }),
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 1, data: "Test 2".into() }),
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 2, data: "Test 3".into() }),
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+ ]];
 
  run_scenario(hello_then_inserted).await
 }
@@ -45,9 +89,9 @@ async fn run_scenario(scenario: Vec<Vec<Action>>) {
      Action::Send(command) => {
       protocol.write_command(command).await?;
      }
-     Action::Receive(_) => {
-      let resp = protocol.read_response().await?; // TODO: compare response
-      println!("response: {:?}", resp);
+     Action::Receive(expected) => {
+      let resp = protocol.read_response().await?;
+      assert_eq!(resp, expected);
      }
     }
    }
@@ -56,7 +100,9 @@ async fn run_scenario(scenario: Vec<Vec<Action>>) {
   })
  });
 
- join_all(workers).await;
+ for res in join_all(workers).await {
+  _ = res.unwrap();
+ }
 }
 
 // struct SyncPoint {

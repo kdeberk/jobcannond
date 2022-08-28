@@ -8,13 +8,30 @@ use tokio::sync::Mutex;
 
 pub type TubeID = usize;
 
-#[derive(PartialEq, Eq)]
+// TODO: Write :tiny: tests for the comparisons
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Job {
  pub id: Option<u32>,
  pub pri: u32,
  pub ttr: u32,
  pub data: Vec<u8>,
  pub tube: TubeID,
+}
+
+impl Ord for Job {
+ fn cmp(&self, other: &Self) -> Ordering {
+  self.pri.cmp(&other.pri).reverse()
+ }
+}
+
+impl PartialOrd for Job {
+ fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+  match self.pri.partial_cmp(&other.pri) {
+   Some(o) => Some(o.reverse()),
+   None => None,
+  }
+ }
 }
 
 // A Tube is an object that holds unreserved jobs. These jobs can be ready or
@@ -149,21 +166,18 @@ impl JobStore {
   let best = tubes.iter().fold(None, |best: Option<(&TubeID, u32)>, cur: &TubeID| -> Option<(&TubeID, u32)> {
    match store.get(cur) {
     None => best,
-    Some(tube) => {
-     match (best, tube.peek()) {
-      (None, None) => best,
-      (None, Some(job)) => Some((cur, job.pri)),
-      (Some((_, _)), None) => best,
-      (Some((_, pri)), Some(job)) => {
-       if job.pri < pri {
-        Some((cur, job.pri))
-       } else {
-        best
-       }
+    Some(tube) => match (best, tube.peek()) {
+     (None, None) => best,
+     (None, Some(job)) => Some((cur, job.pri)),
+     (Some((_, _)), None) => best,
+     (Some((_, pri)), Some(job)) => {
+      if job.pri < pri {
+       Some((cur, job.pri))
+      } else {
+       best
       }
-     };
-     best
-    }
+     }
+    },
    }
   });
 
@@ -210,13 +224,13 @@ struct ReadyJob {
 
 impl Ord for ReadyJob {
  fn cmp(&self, other: &Self) -> Ordering {
-  self.job.pri.cmp(&other.job.pri)
+  self.job.cmp(&other.job)
  }
 }
 
 impl PartialOrd for ReadyJob {
  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-  self.job.pri.partial_cmp(&other.job.pri)
+  self.job.partial_cmp(&other.job)
  }
 }
 
@@ -229,9 +243,9 @@ struct DelayedJob {
 impl Ord for DelayedJob {
  fn cmp(&self, other: &Self) -> Ordering {
   if self.until == other.until {
-   self.job.pri.cmp(&other.job.pri)
+   self.job.cmp(&other.job).reverse()
   } else {
-   self.until.cmp(&other.until)
+   self.until.cmp(&other.until) // TODO: reverse this to?
   }
  }
 }

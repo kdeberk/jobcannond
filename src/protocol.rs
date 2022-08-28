@@ -76,7 +76,7 @@ pub enum Command {
  },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Response {
  Buried {
   id: u32,
