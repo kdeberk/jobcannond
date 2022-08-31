@@ -27,10 +27,7 @@ impl Ord for Job {
 
 impl PartialOrd for Job {
  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-  match self.pri.partial_cmp(&other.pri) {
-   Some(o) => Some(o.reverse()),
-   None => None,
-  }
+  self.pri.partial_cmp(&other.pri).map(|o| o.reverse())
  }
 }
 

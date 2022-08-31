@@ -13,53 +13,113 @@ enum Action {
 
 #[tokio::test]
 async fn test_put_single_job() {
- let hello_then_inserted = vec![vec![Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }), Action::Receive(Response::Inserted { id: 0 })]];
+ let scenario = vec![vec![
+  // put 1 0 10 6 13\r\nHello, World!\r\n
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+ ]];
 
- run_scenario(hello_then_inserted).await
+ run_scenario(scenario).await
 }
 
 #[tokio::test]
 async fn test_put_multiple_jobs() {
- let hello_then_inserted = vec![vec![
+ let scenario = vec![vec![
+  // put 1 0 10 6\r\nTest 1\r\n
   Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 1".into() }),
   Action::Receive(Response::Inserted { id: 0 }),
+  // put 1 0 10 6\r\nTest 2\r\n
   Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 2".into() }),
   Action::Receive(Response::Inserted { id: 1 }),
  ]];
 
- run_scenario(hello_then_inserted).await
+ run_scenario(scenario).await
 }
 
 #[tokio::test]
 async fn test_put_then_reserve() {
- let hello_then_inserted = vec![vec![
+ let scenario = vec![vec![
+  // put 1 0 10 13\r\nHello, World!\r\n
   Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Hello, World!".into() }),
   Action::Receive(Response::Inserted { id: 0 }),
+  // reserve\r\n
   Action::Send(Command::Reserve {}),
   Action::Receive(Response::Reserved { id: 0, data: "Hello, World!".into() }),
  ]];
 
- run_scenario(hello_then_inserted).await
+ run_scenario(scenario).await
 }
 
 #[tokio::test]
 async fn test_puts_then_reserve_by_priority() {
- let hello_then_inserted = vec![vec![
+ let scenario = vec![vec![
+  // put 3 0 10 6\r\nTest 1\r\n
   Action::Send(Command::Put { pri: 3, delay: 0, ttr: 10, data: "Test 1".into() }),
   Action::Receive(Response::Inserted { id: 0 }),
+  // put 1 0 10 6\r\nTest 2\r\n
   Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 2".into() }),
   Action::Receive(Response::Inserted { id: 1 }),
+  // put 2 0 10 6\r\nTest 3\r\n
   Action::Send(Command::Put { pri: 2, delay: 0, ttr: 10, data: "Test 3".into() }),
   Action::Receive(Response::Inserted { id: 2 }),
+  // reserve\r\n
   Action::Send(Command::Reserve {}),
   Action::Receive(Response::Reserved { id: 1, data: "Test 2".into() }),
+  // reserve\r\n
   Action::Send(Command::Reserve {}),
   Action::Receive(Response::Reserved { id: 2, data: "Test 3".into() }),
+  // reserve\r\n
   Action::Send(Command::Reserve {}),
   Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
  ]];
 
- run_scenario(hello_then_inserted).await
+ run_scenario(scenario).await
+}
+
+#[tokio::test]
+async fn test_reserve_and_release() {
+ let scenario = vec![vec![
+  // put 1 0 10 6\r\nTest 1\r\n
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 1".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+  // put 1 0 10 6\r\nTest 2\r\n
+  Action::Send(Command::Put { pri: 2, delay: 0, ttr: 10, data: "Test 2".into() }),
+  Action::Receive(Response::Inserted { id: 1 }),
+  // reserve\r\n
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  // release 0 0 1\r\n
+  Action::Send(Command::Release { id: 0, delay: 0, pri: 1 }),
+  Action::Receive(Response::Released {}),
+  // reserve\r\n
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+ ]];
+
+ run_scenario(scenario).await
+}
+
+#[tokio::test]
+async fn test_reserve_and_delete() {
+ let scenario = vec![vec![
+  // put 1 0 10 6\r\nTest 1\r\n
+  Action::Send(Command::Put { pri: 1, delay: 0, ttr: 10, data: "Test 1".into() }),
+  Action::Receive(Response::Inserted { id: 0 }),
+  // put 1 0 10 6\r\nTest 2\r\n
+  Action::Send(Command::Put { pri: 2, delay: 0, ttr: 10, data: "Test 2".into() }),
+  Action::Receive(Response::Inserted { id: 1 }),
+  // reserve\r\n
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  // delete 0 \r\n
+  Action::Send(Command::Delete { id: 0 }),
+  Action::Receive(Response::Deleted {}),
+  // reserve\r\n
+  Action::Send(Command::Reserve {}),
+  Action::Receive(Response::Reserved { id: 1, data: "Test 2".into() }),
+ ]];
+
+ run_scenario(scenario).await
 }
 
 async fn run_scenario(scenario: Vec<Vec<Action>>) {

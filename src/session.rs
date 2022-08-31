@@ -132,8 +132,9 @@ where RW: AsyncRead + AsyncWrite
  async fn handle_reserve(&mut self) -> Result<Response, SessionError> {
   match self.store.pop_ready(&self.watched).await {
    Some(job) => {
-    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data);
+    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data.clone()); // TODO: unnecessary clone
     self.by_time.push(ReservedJob { id, until: std::time::Instant::now() + std::time::Duration::new(ttr as u64, 0) });
+    self.reserved.insert(id, job);
     Ok(Response::Reserved { id, data })
    }
    None => Ok(Response::NotFound), // TODO: wait until one job is available
