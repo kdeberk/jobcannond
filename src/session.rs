@@ -5,6 +5,7 @@ use crate::jobs::{Job, JobStore, TubeID};
 use crate::protocol::{Command, Error as ProtocolError, Protocol, Response};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(thiserror::Error, Debug)]
@@ -109,7 +110,7 @@ where RW: AsyncRead + AsyncWrite
    ttr = MIN_TTR;
   }
 
-  let job = Job { id: None, pri, ttr, data, tube: self.tube_id };
+  let job = Job { id: None, pri, ttr, data: Arc::new(data), tube: self.tube_id };
 
   let job_id = if 0 < delay {
    let until = std::time::Instant::now() + std::time::Duration::new(delay as u64, 0);
@@ -132,7 +133,7 @@ where RW: AsyncRead + AsyncWrite
  async fn handle_reserve(&mut self) -> Result<Response, SessionError> {
   match self.store.pop_ready(&self.watched).await {
    Some(job) => {
-    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data.clone()); // TODO: unnecessary clone
+    let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data.clone());
     self.by_time.push(ReservedJob { id, until: std::time::Instant::now() + std::time::Duration::new(ttr as u64, 0) });
     self.reserved.insert(id, job);
     Ok(Response::Reserved { id, data })

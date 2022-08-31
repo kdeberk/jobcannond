@@ -15,7 +15,7 @@ pub struct Job {
  pub id: Option<u32>,
  pub pri: u32,
  pub ttr: u32,
- pub data: Vec<u8>,
+ pub data: Arc<Vec<u8>>,
  pub tube: TubeID,
 }
 

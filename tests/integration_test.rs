@@ -1,6 +1,7 @@
 use futures::future::join_all;
 use jobcannond::protocol::{Command, Error as ProtocolError, Protocol, Response};
 use jobcannond::server::run_tcp_server;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -44,7 +45,7 @@ async fn test_put_then_reserve() {
   Action::Receive(Response::Inserted { id: 0 }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 0, data: "Hello, World!".into() }),
+  Action::Receive(Response::Reserved { id: 0, data: payload("Hello, World!") }),
  ]];
 
  run_scenario(scenario).await
@@ -64,13 +65,13 @@ async fn test_puts_then_reserve_by_priority() {
   Action::Receive(Response::Inserted { id: 2 }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 1, data: "Test 2".into() }),
+  Action::Receive(Response::Reserved { id: 1, data: payload("Test 2") }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 2, data: "Test 3".into() }),
+  Action::Receive(Response::Reserved { id: 2, data: payload("Test 3") }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  Action::Receive(Response::Reserved { id: 0, data: payload("Test 1") }),
  ]];
 
  run_scenario(scenario).await
@@ -87,13 +88,13 @@ async fn test_reserve_and_release() {
   Action::Receive(Response::Inserted { id: 1 }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  Action::Receive(Response::Reserved { id: 0, data: payload("Test 1") }),
   // release 0 0 1\r\n
   Action::Send(Command::Release { id: 0, delay: 0, pri: 1 }),
   Action::Receive(Response::Released {}),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  Action::Receive(Response::Reserved { id: 0, data: payload("Test 1") }),
  ]];
 
  run_scenario(scenario).await
@@ -110,13 +111,13 @@ async fn test_reserve_and_delete() {
   Action::Receive(Response::Inserted { id: 1 }),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 0, data: "Test 1".into() }),
+  Action::Receive(Response::Reserved { id: 0, data: payload("Test 1") }),
   // delete 0 \r\n
   Action::Send(Command::Delete { id: 0 }),
   Action::Receive(Response::Deleted {}),
   // reserve\r\n
   Action::Send(Command::Reserve {}),
-  Action::Receive(Response::Reserved { id: 1, data: "Test 2".into() }),
+  Action::Receive(Response::Reserved { id: 1, data: payload("Test 2") }),
  ]];
 
  run_scenario(scenario).await
@@ -188,3 +189,7 @@ async fn run_scenario(scenario: Vec<Vec<Action>>) {
 //   }
 //  }
 // }
+
+fn payload(s: &str) -> Arc<Vec<u8>> {
+ Arc::new(s.into())
+}

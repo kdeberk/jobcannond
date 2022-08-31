@@ -3,6 +3,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 
@@ -96,7 +97,7 @@ pub enum Response {
  Released,
  Reserved {
   id: u32,
-  data: Vec<u8>,
+  data: Arc<Vec<u8>>,
  },
  TimedOut,
  Touched,
@@ -251,7 +252,7 @@ where RW: AsyncRead + AsyncWrite
     let bytes = self.stream.read_u32().await?;
     self.stream.read_crnl().await?;
     let data = self.stream.read_data(bytes as usize).await?;
-    Ok(Reserved { id, data })
+    Ok(Reserved { id, data: Arc::new(data) })
    }
    "TIMED_OUT" => Ok(TimedOut),
    "TOUCHED" => Ok(Touched),
