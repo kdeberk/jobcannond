@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
-use crate::jobs::{Job, JobStore, TubeID};
+use crate::jobs::{Job, Tube, TubeStore};
 use crate::protocol::{Command, Error as ProtocolError, Protocol, Response};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::Mutex;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
@@ -15,16 +17,13 @@ pub enum SessionError {
 }
 
 // Session wraps a client connection. It handles ownership of reserved jobs and
-// releases them back to the JobStore if expired. At the moment, a session handles
-// a single connection, but in the future, a session could have multiple connections.
+// releases them back to the JobStore if expired.
 pub struct Session<RW> {
  protocol: Protocol<RW>,
 
- tube_id: TubeID,
- tube_name: String,
- watched: HashSet<TubeID>,
-
- store: JobStore,
+ job_id_counter: Arc<AtomicU32>,
+ tube: Arc<Mutex<Tube>>,
+ tube_store: Arc<Mutex<TubeStore>>,
 
  by_time: BinaryHeap<ReservedJob>, // Jobs ordered by reservation expiration time.
  reserved: HashMap<u32, Job>,      // Jobs reserved by this connection.
@@ -39,19 +38,14 @@ const MIN_TTR: u32 = 1;
 impl<RW> Session<RW>
 where RW: AsyncRead + AsyncWrite
 {
- pub fn new(stream: RW, store: JobStore) -> Self {
-  let mut watched = HashSet::new();
-  watched.insert(JobStore::DEFAULT_TUBE_ID);
-
+ pub fn new(stream: RW, job_id_counter: Arc<AtomicU32>, tube_store: Arc<Mutex<TubeStore>>, tube: Arc<Mutex<Tube>>) -> Self {
   Session {
    // protocol wraps the client connection. It handles reading commands and writing responses.
    protocol: Protocol::new(stream),
 
-   tube_id: JobStore::DEFAULT_TUBE_ID,
-   tube_name: JobStore::DEFAULT_TUBE_NAME.into(),
-   watched,
-
-   store,
+   job_id_counter,
+   tube,
+   tube_store,
 
    by_time: BinaryHeap::new(),
    reserved: HashMap::new(),
@@ -69,7 +63,9 @@ where RW: AsyncRead + AsyncWrite
   }
 
   for (_, job) in self.reserved.into_iter() {
-   self.store.push_ready(job);
+   let mut tube = self.tube.lock().await;
+
+   tube.push(job);
   }
 
   Ok(())
@@ -90,16 +86,6 @@ where RW: AsyncRead + AsyncWrite
    Command::Release { id, pri, delay } => self.handle_release(id, pri, delay).await,
    Command::Bury { id, pri } => Ok(Response::NotFound), // TODO
    Command::Touch { id } => Ok(Response::NotFound),     // TODO
-   Command::Watch { tube } => {
-    let tube_id = self.store.tube_id_for_name(&tube).await;
-    self.watched.insert(tube_id);
-    Ok(Response::Watching { count: self.watched.len() as u32 })
-   }
-   Command::Ignore { tube } => {
-    let tube_id = self.store.tube_id_for_name(&tube).await;
-    self.watched.remove(&tube_id);
-    Ok(Response::Watching { count: self.watched.len() as u32 })
-   }
    _ => todo!(),
   }
  }
@@ -110,28 +96,33 @@ where RW: AsyncRead + AsyncWrite
    ttr = MIN_TTR;
   }
 
-  let job = Job { id: None, pri, ttr, data: Arc::new(data), tube: self.tube_id };
+  let job_id = self.job_id_counter.fetch_add(1, AtomicOrdering::AcqRel);
+  let job = Job { id: None, pri, ttr, data: Arc::new(data) };
+  let mut tube = self.tube.lock().await;
 
-  let job_id = if 0 < delay {
+  if 0 < delay {
    let until = std::time::Instant::now() + std::time::Duration::new(delay as u64, 0);
-   self.store.push_delayed(job, until).await
+   tube.push_delayed(job, until)
   } else {
-   self.store.push_ready(job).await
+   tube.push(job)
   };
 
   Ok(Response::Inserted { id: job_id })
  }
 
  // handle_use sets the current tube used by this session. New pushed jobs will be pushed to this session.
- async fn handle_use(&mut self, tube: String) -> Result<Response, SessionError> {
-  self.tube_name = tube;
-  self.tube_id = self.store.tube_id_for_name(&self.tube_name).await;
+ async fn handle_use(&mut self, tube_name: String) -> Result<Response, SessionError> {
+  let mut tube_store = self.tube_store.lock().await;
+  self.tube = tube_store.get(tube_name);
+
   Ok(Response::Inserted { id: 1 })
  }
 
  // handle_reserve blocks until a job has become available on one of the watched tubes.
  async fn handle_reserve(&mut self) -> Result<Response, SessionError> {
-  match self.store.pop_ready(&self.watched).await {
+  let mut tube = self.tube.lock().await;
+
+  match tube.pop() {
    Some(job) => {
     let (id, ttr, data) = (job.id.unwrap(), job.ttr, job.data.clone());
     self.by_time.push(ReservedJob { id, until: std::time::Instant::now() + std::time::Duration::new(ttr as u64, 0) });
@@ -152,11 +143,13 @@ where RW: AsyncRead + AsyncWrite
  async fn handle_release(&mut self, id: u32, pri: u32, delay: u32) -> Result<Response, SessionError> {
   match self.reserved.remove(&id) {
    Some(job) => {
+    let mut tube = self.tube.lock().await;
+
     if 0 < delay {
      let until = std::time::Instant::now() + std::time::Duration::new(delay as u64, 0);
-     self.store.push_delayed(job, until).await;
+     tube.push_delayed(job, until);
     } else {
-     self.store.push_ready(job).await;
+     tube.push(job);
     }
     Ok(Response::Released)
    }

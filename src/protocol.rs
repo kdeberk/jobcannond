@@ -18,9 +18,6 @@ pub enum Command {
  Delete {
   id: u32,
  },
- Ignore {
-  tube: String,
- },
  Kick {
   count: u32,
  },
@@ -29,7 +26,6 @@ pub enum Command {
  },
  ListTubeUsed,
  ListTubes,
- ListTubesWatched,
  PauseTube {
   tube: String,
   delay: u32,
@@ -70,9 +66,6 @@ pub enum Command {
   id: u32,
  },
  Use {
-  tube: String,
- },
- Watch {
   tube: String,
  },
 }
@@ -172,12 +165,10 @@ where RW: AsyncRead + AsyncWrite
     Ok(Bury { id, pri })
    }
    "delete" => Ok(Delete { id: self.stream.read_u32().await? }),
-   "ignore" => Ok(Ignore { tube: self.stream.read_word().await? }),
    "kick" => Ok(Kick { count: self.stream.read_u32().await? }),
    "kick-job" => Ok(KickJob { id: self.stream.read_u32().await? }),
    "list-tubes-used" => Ok(ListTubeUsed),
    "list-tubes" => Ok(ListTubes),
-   "list-tubes-watched" => Ok(ListTubesWatched),
    "pause-tube" => {
     let tube = self.stream.read_word().await?;
     let delay = self.stream.read_u32().await?;
@@ -210,7 +201,6 @@ where RW: AsyncRead + AsyncWrite
    "stats-tube" => Ok(StatsTube { tube: self.stream.read_word().await? }),
    "touch" => Ok(Touch { id: self.stream.read_u32().await? }),
    "use" => Ok(Use { tube: self.stream.read_word().await? }),
-   "watch" => Ok(Watch { tube: self.stream.read_word().await? }),
    xx => Err(Error::UnexpectedInput { reason: format!("Unknown command {}", xx) }),
   };
 
@@ -287,12 +277,10 @@ where RW: AsyncRead + AsyncWrite
   match c {
    Bury { id, pri } => async_write!(self.stream, "bury {} {}", id, pri),
    Delete { id } => async_write!(self.stream, "delete {}", id),
-   Ignore { tube } => async_write!(self.stream, "ignore {}", tube),
    Kick { count } => async_write!(self.stream, "kick {}", count),
    KickJob { id } => async_write!(self.stream, "kick-job {}", id),
    ListTubeUsed => async_write!(self.stream, "list-tube-used"),
    ListTubes => async_write!(self.stream, "list-tubes"),
-   ListTubesWatched => async_write!(self.stream, "list-tubes-watched"),
    PauseTube { tube, delay } => async_write!(self.stream, "pause-tube {} {}", tube, delay),
    Peek { id } => async_write!(self.stream, "peek {}", id),
    PeekBuried => async_write!(self.stream, "peek-buried"),
@@ -312,7 +300,6 @@ where RW: AsyncRead + AsyncWrite
    StatsTube { tube } => async_write!(self.stream, "stats-tube {}", tube),
    Touch { id } => async_write!(self.stream, "touch {}", id),
    Use { tube } => async_write!(self.stream, "use {}", tube),
-   Watch { tube } => async_write!(self.stream, "watch {}", tube),
   };
 
   async_write!(self.stream, "\r\n");
